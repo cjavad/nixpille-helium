@@ -33,7 +33,8 @@
 
 let
   pname = "helium";
-  version = "0.8.4.1";
+  sources = builtins.fromJSON (builtins.readFile ./sources.json);
+  inherit (sources) version;
 in
 stdenv.mkDerivation {
   inherit pname version;
@@ -45,11 +46,7 @@ stdenv.mkDerivation {
       in
       "https://github.com/imputnet/helium-linux/releases/download/${version}/${pname}-${version}-${arch}_linux.tar.xz";
     hash =
-      {
-        x86_64-linux = "sha256-M/1wGewl500vJsoYfhbgXHQ4vlI6d0PRGGGGsRol6sc=";
-        aarch64-linux = "sha256-znte6SBQDqKvnfFR1PDPg3LcgdE2odoU7dy72BfGes0=";
-      }
-      .${stdenv.hostPlatform.system}
+      sources.hashes.${stdenv.hostPlatform.system}
         or (throw "Unsupported system: ${stdenv.hostPlatform.system}");
   };
 

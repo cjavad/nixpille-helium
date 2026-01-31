@@ -23,7 +23,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           latest=$(gh api repos/imputnet/helium-linux/releases/latest --jq '.tag_name')
-          current=$(grep 'version = ' package.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          current=$(jq -r .version sources.json)
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
           echo "current=$current" >> "$GITHUB_OUTPUT"
           if [[ "$latest" != "$current" ]]; then
@@ -58,14 +58,20 @@ jobs:
           hash=$(nix hash file --sri "/tmp/${base}")
           echo "hash=$hash" >> "$GITHUB_OUTPUT"
 
-      - name: Update package.nix
+      - name: Update sources.json
         if: steps.check.outputs.update == 'true'
         run: |
-          current="${{ steps.check.outputs.current }}"
-          latest="${{ steps.check.outputs.latest }}"
-          sed -i "s|version = \"$current\"|version = \"$latest\"|" package.nix
-          sed -i "s|x86_64-linux = \"sha256-[^\"]*\"|x86_64-linux = \"${{ steps.x86.outputs.hash }}\"|" package.nix
-          sed -i "s|aarch64-linux = \"sha256-[^\"]*\"|aarch64-linux = \"${{ steps.arm.outputs.hash }}\"|" package.nix
+          jq -n \
+            --arg version "${{ steps.check.outputs.latest }}" \
+            --arg x86 "${{ steps.x86.outputs.hash }}" \
+            --arg arm "${{ steps.arm.outputs.hash }}" \
+            '{
+              version: $version,
+              hashes: {
+                "x86_64-linux": $x86,
+                "aarch64-linux": $arm
+              }
+            }' > sources.json
 
       - name: Verify build
         if: steps.check.outputs.update == 'true'
@@ -77,7 +83,7 @@ jobs:
           latest="${{ steps.check.outputs.latest }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.nix
+          git add sources.json
           git commit -m "Update Helium to ${latest}"
           git tag -a "v${latest}" -m "Helium ${latest}"
           git push --follow-tags

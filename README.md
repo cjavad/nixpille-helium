@@ -86,8 +86,8 @@ instead of contacting Google directly.
 
 ## Updating
 
-Version and SRI hashes are pinned for reproducibility. To update to the
-latest release:
+Version and SRI hashes live in `sources.json`, which `package.nix` reads
+at evaluation time. To update to the latest release:
 
 ```sh
 ./update.sh
@@ -96,7 +96,7 @@ latest release:
 The script queries the GitHub API, downloads both architecture tarballs,
 **verifies GPG signatures** against the Helium signing key
 (`BE677C1989D35EAB2C5F26C9351601AD01D6378E`), computes SRI hashes, and
-patches `package.nix`. Requires `gh`, `nix`, `gpg`, and `curl`.
+writes `sources.json`. Requires `gh`, `nix`, `gpg`, `curl`, and `jq`.
 
 A GitHub Actions workflow (`.github/workflows/update.yml`) runs daily,
 performs the same GPG-verified update, builds the package, and creates a
