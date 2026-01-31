@@ -7,7 +7,7 @@ Nix flake packaging the [Helium](https://helium.computer/) browser with a Home M
 Run directly:
 
 ```sh
-nix run github:javad/nixpille-helium
+nix run github:cjavad/nixpille-helium
 ```
 
 Or add as a flake input:
@@ -15,7 +15,7 @@ Or add as a flake input:
 ```nix
 # flake.nix
 inputs.helium = {
-  url = "github:javad/nixpille-helium";
+  url = "github:cjavad/nixpille-helium";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
