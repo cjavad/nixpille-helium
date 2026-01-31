@@ -1,48 +1,127 @@
 {
   lib,
   stdenv,
-  appimageTools,
   fetchurl,
   makeWrapper,
+  autoPatchelfHook,
+  qt6,
+  glib,
+  gdk-pixbuf,
+  gtk3,
+  nspr,
+  nss,
+  dbus,
+  atk,
+  at-spi2-atk,
+  cups,
+  expat,
+  libxcb,
+  libxkbcommon,
+  at-spi2-core,
+  xorg,
+  mesa,
+  cairo,
+  pango,
+  systemd,
+  alsa-lib,
+  libdrm,
+  libGL,
   libva,
+  pipewire,
+  libpulseaudio,
 }:
 
 let
   pname = "helium";
   version = "0.8.4.1";
+in
+stdenv.mkDerivation {
+  inherit pname version;
 
   src = fetchurl {
     url =
       let
         arch = if stdenv.hostPlatform.isAarch64 then "arm64" else "x86_64";
       in
-      "https://github.com/imputnet/helium-linux/releases/download/${version}/${pname}-${version}-${arch}.AppImage";
+      "https://github.com/imputnet/helium-linux/releases/download/${version}/${pname}-${version}-${arch}_linux.tar.xz";
     hash =
       {
-        x86_64-linux = "sha256-y4KzR+pkBUuyVU+ALrzdY0n2rnTB7lTN2ZmVSzag5vE=";
-        aarch64-linux = "sha256-fTPLZmHAqJqDDxeGgfSji/AY8nCt+dVeCUQIqB80f7M=";
+        x86_64-linux = "sha256-M/1wGewl500vJsoYfhbgXHQ4vlI6d0PRGGGGsRol6sc=";
+        aarch64-linux = "sha256-znte6SBQDqKvnfFR1PDPg3LcgdE2odoU7dy72BfGes0=";
       }
       .${stdenv.hostPlatform.system}
         or (throw "Unsupported system: ${stdenv.hostPlatform.system}");
   };
 
-  appimageContents = appimageTools.extract { inherit pname version src; };
-in
-appimageTools.wrapType2 {
-  inherit pname version src;
-  name = pname;
+  nativeBuildInputs = [
+    makeWrapper
+    autoPatchelfHook
+    qt6.wrapQtAppsHook
+  ];
 
-  nativeBuildInputs = [ makeWrapper ];
-  extraPkgs = pkgs: [ pkgs.libva ];
+  buildInputs = [
+    glib
+    gdk-pixbuf
+    gtk3
+    nspr
+    nss
+    dbus
+    atk
+    at-spi2-atk
+    cups
+    expat
+    libxcb
+    libxkbcommon
+    at-spi2-core
+    xorg.libX11
+    xorg.libXcomposite
+    xorg.libXdamage
+    xorg.libXext
+    xorg.libXfixes
+    xorg.libXrandr
+    mesa
+    cairo
+    pango
+    systemd
+    alsa-lib
+    libdrm
+    qt6.qtbase
+  ];
 
-  extraInstallCommands = ''
-    install -m 444 -D ${appimageContents}/${pname}.desktop -t $out/share/applications
-    substituteInPlace $out/share/applications/${pname}.desktop \
-      --replace-fail 'Exec=AppRun' 'Exec=${pname}'
-    cp -r ${appimageContents}/usr/share/icons $out/share
+  # Helium bundles Qt5 shims for backwards compat; we use Qt6
+  autoPatchelfIgnoreMissingDeps = [
+    "libQt5Core.so.5"
+    "libQt5Gui.so.5"
+    "libQt5Widgets.so.5"
+  ];
 
-    wrapProgram $out/bin/${pname} \
+  # Let wrapQtAppsHook handle Qt env, we compose via makeWrapper
+  dontWrapQtApps = true;
+
+  installPhase = ''
+    runHook preInstall
+
+    mkdir -p $out/opt/helium $out/bin $out/share/applications $out/share/pixmaps
+    cp -r ./* $out/opt/helium/
+
+    makeWrapper $out/opt/helium/helium $out/bin/helium \
+      "''${qtWrapperArgs[@]}" \
+      --set CHROME_WRAPPER "$out/bin/helium" \
+      --set CHROME_VERSION_EXTRA "nixpille-helium" \
+      --prefix LD_LIBRARY_PATH : "$out/opt/helium:${
+        lib.makeLibraryPath [
+          libGL
+          libva
+          pipewire
+          libpulseaudio
+        ]
+      }" \
       --add-flags "--enable-features=VaapiVideoDecodeLinuxGL,VaapiVideoEncoder"
+
+    install -m 444 $out/opt/helium/helium.desktop $out/share/applications/helium.desktop
+    install -m 444 $out/opt/helium/product_logo_256.png $out/share/pixmaps/helium.png
+
+    runHook postInstall
   '';
 
   meta = {

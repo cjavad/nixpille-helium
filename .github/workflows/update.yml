@@ -1,0 +1,83 @@
+name: Update Helium
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily at 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Check for new release
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest=$(gh api repos/imputnet/helium-linux/releases/latest --jq '.tag_name')
+          current=$(grep 'version = ' package.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          if [[ "$latest" != "$current" ]]; then
+            echo "update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import Helium GPG key
+        if: steps.check.outputs.update == 'true'
+        run: gpg --keyserver keyserver.ubuntu.com --recv-keys BE677C1989D35EAB2C5F26C9351601AD01D6378E
+
+      - name: Download and verify x86_64
+        if: steps.check.outputs.update == 'true'
+        id: x86
+        run: |
+          v="${{ steps.check.outputs.latest }}"
+          base="helium-${v}-x86_64_linux.tar.xz"
+          curl -sL "https://github.com/imputnet/helium-linux/releases/download/${v}/${base}" -o "/tmp/${base}"
+          curl -sL "https://github.com/imputnet/helium-linux/releases/download/${v}/${base}.asc" -o "/tmp/${base}.asc"
+          gpg --verify "/tmp/${base}.asc" "/tmp/${base}"
+          hash=$(nix hash file --sri "/tmp/${base}")
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify aarch64
+        if: steps.check.outputs.update == 'true'
+        id: arm
+        run: |
+          v="${{ steps.check.outputs.latest }}"
+          base="helium-${v}-arm64_linux.tar.xz"
+          curl -sL "https://github.com/imputnet/helium-linux/releases/download/${v}/${base}" -o "/tmp/${base}"
+          curl -sL "https://github.com/imputnet/helium-linux/releases/download/${v}/${base}.asc" -o "/tmp/${base}.asc"
+          gpg --verify "/tmp/${base}.asc" "/tmp/${base}"
+          hash=$(nix hash file --sri "/tmp/${base}")
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Update package.nix
+        if: steps.check.outputs.update == 'true'
+        run: |
+          current="${{ steps.check.outputs.current }}"
+          latest="${{ steps.check.outputs.latest }}"
+          sed -i "s|version = \"$current\"|version = \"$latest\"|" package.nix
+          sed -i "s|x86_64-linux = \"sha256-[^\"]*\"|x86_64-linux = \"${{ steps.x86.outputs.hash }}\"|" package.nix
+          sed -i "s|aarch64-linux = \"sha256-[^\"]*\"|aarch64-linux = \"${{ steps.arm.outputs.hash }}\"|" package.nix
+
+      - name: Verify build
+        if: steps.check.outputs.update == 'true'
+        run: nix build .#helium
+
+      - name: Commit and tag
+        if: steps.check.outputs.update == 'true'
+        run: |
+          latest="${{ steps.check.outputs.latest }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.nix
+          git commit -m "Update Helium to ${latest}"
+          git tag -a "v${latest}" -m "Helium ${latest}"
+          git push --follow-tags
