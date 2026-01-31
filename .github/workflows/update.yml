@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
@@ -26,16 +28,24 @@ jobs:
           current=$(jq -r .version sources.json)
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
           echo "current=$current" >> "$GITHUB_OUTPUT"
-          if [[ "$latest" != "$current" ]]; then
-            echo "update=true" >> "$GITHUB_OUTPUT"
+
+          # Check if we already have this tag — handles first run where
+          # sources.json matches upstream but no release exists yet.
+          if git rev-parse "v${latest}" >/dev/null 2>&1; then
+            echo "Tag v${latest} already exists, nothing to do"
+          else
+            echo "need_release=true" >> "$GITHUB_OUTPUT"
+            if [[ "$latest" != "$current" ]]; then
+              echo "need_update=true" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Import Helium GPG key
-        if: steps.check.outputs.update == 'true'
+        if: steps.check.outputs.need_release == 'true'
         run: gpg --keyserver keyserver.ubuntu.com --recv-keys BE677C1989D35EAB2C5F26C9351601AD01D6378E
 
       - name: Download and verify x86_64
-        if: steps.check.outputs.update == 'true'
+        if: steps.check.outputs.need_update == 'true'
         id: x86
         run: |
           v="${{ steps.check.outputs.latest }}"
@@ -47,7 +57,7 @@ jobs:
           echo "hash=$hash" >> "$GITHUB_OUTPUT"
 
       - name: Download and verify aarch64
-        if: steps.check.outputs.update == 'true'
+        if: steps.check.outputs.need_update == 'true'
         id: arm
         run: |
           v="${{ steps.check.outputs.latest }}"
@@ -59,7 +69,7 @@ jobs:
           echo "hash=$hash" >> "$GITHUB_OUTPUT"
 
       - name: Update sources.json
-        if: steps.check.outputs.update == 'true'
+        if: steps.check.outputs.need_update == 'true'
         run: |
           jq -n \
             --arg version "${{ steps.check.outputs.latest }}" \
@@ -74,16 +84,31 @@ jobs:
             }' > sources.json
 
       - name: Verify build
-        if: steps.check.outputs.update == 'true'
+        if: steps.check.outputs.need_release == 'true'
         run: nix build .#helium
 
-      - name: Commit and tag
-        if: steps.check.outputs.update == 'true'
+      - name: Commit, tag, and release
+        if: steps.check.outputs.need_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           latest="${{ steps.check.outputs.latest }}"
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add sources.json
-          git commit -m "Update Helium to ${latest}"
+
+          # Only commit if sources.json was updated
+          if ! git diff --quiet sources.json; then
+            git add sources.json
+            git commit -m "Update Helium to ${latest}"
+          fi
+
           git tag -a "v${latest}" -m "Helium ${latest}"
           git push --follow-tags
+
+          upstream="https://github.com/imputnet/helium-linux/releases/tag/${latest}"
+          gh release create "v${latest}" \
+            --title "Helium ${latest}" \
+            --notes "Mirrors upstream release [${latest}](${upstream}).
+
+          GPG-verified against signing key \`BE677C1989D35EAB2C5F26C9351601AD01D6378E\`."
